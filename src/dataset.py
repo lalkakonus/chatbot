@@ -24,6 +24,8 @@ class ConversationsDataset(Dataset):
             # pairs = pairs[:1000]
             vocabulary = buildVocabulary(corpus_name, pairs)
             self.vocabulary, self.pairs = trimRareWords(vocabulary, pairs, MIN_WORD_CNT)
+            self.vocabulary.init_embedding("../data/embedding/wiki-news-300d-1M.vec")
+
             with open(dataset_filepath, "wb") as f:
                 pickle.dump([self.vocabulary, self.pairs], f)
 

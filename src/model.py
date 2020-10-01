@@ -39,7 +39,8 @@ class ChatModel:
         self.decoder_learning_ratio = config["DECODER_LEARNING_RATIO"]
         self.save_every = config["SAVE_EVERY"]
 
-        self.embedding = nn.Embedding(len(self.vocabulary), self.hidden_size)
+        self.embedding = nn.Embedding.from_pretrained(self.vocabulary.embeddings)
+        # self.embedding = nn.Embedding(len(self.vocabulary), self.hidden_size)
         self.encoder = EncoderRNN(self.hidden_size, self.embedding, self.encoder_n_layers, self.dropout)
         self.decoder = DecoderRNN(self.attn_model, self.embedding, self.hidden_size, len(self.vocabulary),
                                   self.decoder_n_layers, self.dropout)
@@ -203,14 +204,16 @@ class ChatModel:
                 # Run a training iteration with batch
                 train_loss += self.__train_iteration__(input_variable, lengths, target_variable, mask, max_target_len,
                                                        train_dataloader.batch_size)
+            train_loss /= len(train_dataloader)
             for test_batch in test_dataloader:
                 input_variable, lengths, target_variable, mask, max_target_len = test_batch
                 # Run a training iteration with batch
                 test_loss += self.__test_iteration__(input_variable, lengths, target_variable, mask, max_target_len,
                                                      train_dataloader.batch_size)
+            test_loss /= len(test_dataloader)
 
             # Print progress
-            self.train_loss.append(train_loss / len(train_dataloader))
+            self.train_loss.append(train_loss)
             print("Iteration: {}; Percent complete: {:.1f}%; "
                   "Average train loss: {:.4f}; test loss: {:.4f}".format(self.epoch, self.epoch / self.n_epoch * 100,
                                                                          train_loss, test_loss))
@@ -274,7 +277,7 @@ class ChatModel:
 
 
 if __name__ == "__main__":
-    dataset = ConversationsDataset(build=False)
+    dataset = ConversationsDataset(build=True)
     with open("../config.json", "r") as f:
         config = json.load(f)
     config["VOCABULARY"] = dataset.vocabulary

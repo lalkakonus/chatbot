@@ -2,6 +2,9 @@ import os
 import random
 import re
 import unicodedata
+import io
+
+import torch
 
 from helpers import PAD_token, SOS_token, EOS_token, MAX_SENTENCE_LENGTH, MIN_WORD_CNT
 
@@ -14,9 +17,24 @@ class Vocabulary:
         self.word2count = {}
         self.index2word = {PAD_token: "PAD", SOS_token: "SOS", EOS_token: "EOS"}
         self.num_words = 3  # Count SOS, EOS, PAD
+        self.embeddings = torch.Tensor()
+        self.embedding_dim = None
 
     def __len__(self):
         return self.num_words
+
+    def init_embedding(self, path):
+        fin = io.open(path, 'r', encoding='utf-8', newline='\n', errors='ignore')
+        n, self.embedding_dim = map(int, fin.readline().split())
+        data = {}
+        self.embeddings = torch.empty(self.num_words, self.embedding_dim)
+        torch.nn.init.xavier_uniform_(self.embeddings)
+        for line in fin:
+            tokens = line.rstrip().split(' ')
+            if tokens[0] in self.word2index:
+                idx = self.word2index[tokens[0]]
+                self.embeddings[idx] = torch.Tensor(list(map(float, tokens[1:])))
+        return data
 
     def addSentence(self, sentence):
         for word in sentence.split():
@@ -144,6 +162,7 @@ if __name__ == "__main__":
     pairs = loadPreprocessedData(corpus_name, datafile)
     vocabulary = buildVocabulary(corpus_name, pairs)
     vocabulary, pairs = trimRareWords(vocabulary, pairs, MIN_WORD_CNT)
+    vocabulary.init_embedding("../data/embedding/wiki-news-300d-1M.vec")
 
     batches = batch2TrainData(vocabulary, [random.choice(pairs) for _ in range(10)])
     input_variable, lengths, target_variable, mask, max_target_len = batches

@@ -3,7 +3,7 @@
   "MIN_WORD_CNT": 3,
   "MODEL_NAME": "cb_model",
   "ATTN_MODEL": "dot",
-  "HIDDEN_SIZE": 500,
+  "HIDDEN_SIZE": 300,
   "ENCODER_N_LAYERS": 2,
   "DECODER_N_LAYERS": 2,
   "DROPOUT": 0.1,
