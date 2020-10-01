@@ -19,16 +19,13 @@ from helpers import SOS_token, maskNLLLoss, device, indexesFromSentence, MAX_SEN
 
 class ChatModel:
 
-    def __init__(self, vocabulary):
-        self.vocabulary = vocabulary
-        self.epoch = 1
-        self.train_loss = []
+    def __init__(self, config):
         self.checkpoint_dir = "../data/checkpoints"
 
-        with open("../config.json", "r") as f:
-            config = json.load(f)
-
+        self.epoch = config.get("EPOCH", 1)
+        self.train_loss = config.get("TRAIN_LOSS", [])
         self.model_name = config["MODEL_NAME"]
+        self.vocabulary = config["VOCABULARY"]
         self.attn_model = config["ATTN_MODEL"]
         self.hidden_size = config["HIDDEN_SIZE"]
         self.encoder_n_layers = config["ENCODER_N_LAYERS"]
@@ -42,13 +39,16 @@ class ChatModel:
         self.decoder_learning_ratio = config["DECODER_LEARNING_RATIO"]
         self.save_every = config["SAVE_EVERY"]
 
-        # Initialize word embeddings
         self.embedding = nn.Embedding(len(self.vocabulary), self.hidden_size)
         self.encoder = EncoderRNN(self.hidden_size, self.embedding, self.encoder_n_layers, self.dropout)
         self.decoder = DecoderRNN(self.attn_model, self.embedding, self.hidden_size, len(self.vocabulary),
                                   self.decoder_n_layers, self.dropout)
 
-        self.searcher = GreedySearch(self.encoder, self.decoder)
+        if config.get("LOAD_WEIGHT", False):
+            self.embedding.load_state_dict(config["EMBEDDING"])
+            self.encoder.load_state_dict(config["ENCODER"])
+            self.decoder.load_state_dict(config["DECODER"])
+
         # Use appropriate device
         self.encoder = self.encoder.to(device)
         self.decoder = self.decoder.to(device)
@@ -57,7 +57,13 @@ class ChatModel:
         self.decoder_optimizer = optim.Adam(self.decoder.parameters(),
                                             lr=self.learning_rate * self.decoder_learning_ratio)
 
-        print('Models built and ready to go!')
+        if config.get("LOAD_WEIGHT", False):
+            self.encoder_optimizer.load_state_dict(config["ENCODER_OPTIMIZER"])
+            self.decoder_optimizer.load_state_dict(config["DECODER_OPTIMIZER"])
+
+        self.searcher = GreedySearch(self.encoder, self.decoder)
+
+        print('Model initialized')
 
     def __configure_cuda__(self):
         for state in self.encoder_optimizer.state.values():
@@ -146,39 +152,26 @@ class ChatModel:
         self.encoder.train()
         self.decoder.train()
 
-        # Run training iterations
-        print("Starting Training!")
-
-        # training_batches = [batch2TrainData(voc, [random.choice(pairs) for _ in range(batch_size)])
-        #                     for _ in range(self.n_iteration)]
-
-        # Initializations
-        print('Initializing ...')
-        print_loss = 0
-
         # Training loop
-        print_every = 1
         print("Training...")
-        for epoch in range(self.epoch, self.n_epoch + 1):
+        for self.epoch in range(self.epoch, self.n_epoch + 1):
+            loss = 0
             for train_batch in dataloader:
                 # Extract fields from batch
                 input_variable, lengths, target_variable, mask, max_target_len = train_batch
 
                 # Run a training iteration with batch
-                loss = self.__train_iteration__(input_variable, lengths, target_variable, mask, max_target_len,
+                loss += self.__train_iteration__(input_variable, lengths, target_variable, mask, max_target_len,
                                                 dataloader.batch_size)
-                print_loss += loss
 
             # Print progress
-            print_loss_avg = print_loss / print_every
-            print("Iteration: {}; Percent complete: {:.1f}%; Average loss: {:.4f}".format(epoch,
-                                                                                          epoch / self.n_epoch * 100,
-                                                                                          print_loss_avg))
-            print_loss = 0
-
+            self.train_loss.append(loss / len(dataloader))
+            print("Iteration: {}; Percent complete: {:.1f}%; Average loss: {:.4f}".format(self.epoch,
+                                                                                          self.epoch / self.n_epoch * 100,
+                                                                                          self.train_loss[-1]))
             # Save checkpoint
-            # if epoch % self.save_every == 0:
-            #     self.save(epoch, print_loss)
+            if self.epoch % self.save_every == 0:
+                self.save()
 
     def evaluate(self, sentence):
         self.encoder.eval()
@@ -195,35 +188,11 @@ class ChatModel:
         decoded_words = [self.vocabulary.index2word[token.item()] for token in tokens]
         return decoded_words
 
-    def load(self, epoch=100):
-        filename = '{}-{}_{}_{}_checkpoint.tar'.format(self.encoder_n_layers, self.decoder_n_layers,
-                                                       self.hidden_size, self.epoch)
-
-        filepath = os.path.join(self.checkpoint_dir, filename)
-
-        # If loading on same machine the model was trained on
-        checkpoint = torch.load(filepath)
-        self.epoch = checkpoint['epoch']
-        self.train_loss = checkpoint["train_loss"]
-
-        encoder_sd = checkpoint['en']
-        decoder_sd = checkpoint['de']
-        encoder_optimizer_sd = checkpoint['en_opt']
-        decoder_optimizer_sd = checkpoint['de_opt']
-        embedding_sd = checkpoint['embedding']
-
-        # Initialize word embeddings
-        self.embedding.load_state_dict(embedding_sd)
-        self.encoder.load_state_dict(encoder_sd)
-        self.decoder.load_state_dict(decoder_sd)
-
-        # Use appropriate device
-        self.encoder = self.encoder.to(device)
-        self.decoder = self.decoder.to(device)
-
-        self.encoder_optimizer.load_state_dict(encoder_optimizer_sd)
-        self.decoder_optimizer.load_state_dict(decoder_optimizer_sd)
-        return self
+    @classmethod
+    def load(cls, checkpoint_dir, encoder_n_layers, decoder_n_layers, hidden_size, epoch):
+        filename = '{}-{}_{}_{}_checkpoint.tar'.format(encoder_n_layers, decoder_n_layers, hidden_size, epoch)
+        checkpoint = torch.load(os.path.join(checkpoint_dir, filename))
+        return cls(checkpoint)
 
     def save(self):
         if not os.path.exists(self.checkpoint_dir):
@@ -231,21 +200,43 @@ class ChatModel:
         filename = '{}-{}_{}_{}_checkpoint.tar'.format(self.encoder_n_layers, self.decoder_n_layers,
                                                        self.hidden_size, self.epoch)
         torch.save({
-            'epoch': self.epoch,
-            'en': self.encoder.state_dict(),
-            'de': self.decoder.state_dict(),
-            'en_opt': self.encoder_optimizer.state_dict(),
-            'de_opt': self.decoder_optimizer.state_dict(),
-            'train_loss': self.train_loss,
-            'embedding': self.embedding.state_dict()
+            "LOAD_WEIGHT": True,
+            "EPOCH": self.epoch,
+            "TRAIN_LOSS": self.train_loss,
+            "MODEL_NAME": self.model_name,
+            "VOCABULARY": self.vocabulary,
+            "ATTN_MODEL": self.attn_model,
+            "HIDDEN_SIZE": self.hidden_size,
+            "ENCODER_N_LAYERS": self.encoder_n_layers,
+            "DECODER_N_LAYERS": self.decoder_n_layers,
+            "DROPOUT": self.dropout,
+            "BATCH_SIZE": self.batch_size,
+            "N_EPOCH": self.n_epoch,
+            "CLIP": self.clip,
+            "TEACHER_FORCING_RATIO": self.teacher_forcing_ratio,
+            "LEARNING_RATE": self.learning_rate,
+            "DECODER_LEARNING_RATIO": self.decoder_learning_ratio,
+            "SAVE_EVERY": self.save_every,
+            "ENCODER": self.encoder.state_dict(),
+            "DECODER": self.decoder.state_dict(),
+            "EMBEDDING": self.embedding.state_dict(),
+            "ENCODER_OPTIMIZER": self.encoder_optimizer.state_dict(),
+            "DECODER_OPTIMIZER": self.decoder_optimizer.state_dict(),
         }, os.path.join(self.checkpoint_dir, filename))
         return self
 
 
 if __name__ == "__main__":
-    dataset = ConversationsDataset()
-    dataloader = DataLoader(dataset, batch_size=64, collate_fn=dataset.batch_to_train_data,
+    dataset = ConversationsDataset(build=False)
+    with open("../config.json", "r") as f:
+        config = json.load(f)
+    config["VOCABULARY"] = dataset.vocabulary
+
+    dataloader = DataLoader(dataset, batch_size=config["BATCH_SIZE"], collate_fn=dataset.batch_to_train_data,
                             drop_last=True, shuffle=True)
-    model = ChatModel(dataset.vocabulary)
+
+    # model = ChatModel(config)
     # model.train(dataloader)
-    print(model.evaluate("hello dear !"))
+    # model.save()
+    model = ChatModel.load("../data/checkpoints/", 2, 2, 500, 10)
+    # print(model.evaluate("hello dear !"))

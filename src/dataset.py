@@ -7,7 +7,7 @@ from prepare_data import loadPreprocessedData, buildVocabulary, trimRareWords, V
 
 
 class ConversationsDataset(Dataset):
-    def __init__(self, corpus_name="cornell movie-dialogs corpus"):
+    def __init__(self, corpus_name="cornell movie-dialogs corpus", build=False):
 
         corpus = os.path.join("../data", corpus_name)
         datafile = os.path.join(corpus, "formatted_movie_lines.txt")
@@ -16,15 +16,16 @@ class ConversationsDataset(Dataset):
         self.vocabulary = Vocabulary(corpus_name)
         self.pairs = []
 
-        if os.path.exists(dataset_filepath):
+        if os.path.exists(dataset_filepath) and build is False:
             with open(dataset_filepath, "rb") as f:
                 self.vocabulary, self.pairs = pickle.load(f)
         else:
             pairs = loadPreprocessedData(corpus_name, datafile)
+            # pairs = pairs[:1000]
             vocabulary = buildVocabulary(corpus_name, pairs)
             self.vocabulary, self.pairs = trimRareWords(vocabulary, pairs, MIN_WORD_CNT)
             with open(dataset_filepath, "wb") as f:
-                pickle.dump([vocabulary, pairs], f)
+                pickle.dump([self.vocabulary, self.pairs], f)
 
     def batch_to_train_data(self, pairs_batch):
         pairs_batch.sort(key=lambda x: len(x[0].split()), reverse=True)
@@ -46,7 +47,8 @@ class ConversationsDataset(Dataset):
 if __name__ == "__main__":
     dataset = ConversationsDataset()
     print(dataset[1])
-    dataloader = DataLoader(dataset, batch_size=3, collate_fn=dataset.batch_to_train_data)
-    for batch in dataloader:
-        print(batch)
-        break
+    dataloader = DataLoader(dataset, batch_size=1, collate_fn=dataset.batch_to_train_data)
+    print(len(dataloader))
+    # for batch in dataloader:
+    #     print(batch)
+    #     break
