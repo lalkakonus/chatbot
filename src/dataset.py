@@ -7,7 +7,7 @@ from prepare_data import loadPreprocessedData, buildVocabulary, trimRareWords, V
 
 
 class ConversationsDataset(Dataset):
-    def __init__(self, corpus_name="cornell movie-dialogs corpus", build=False):
+    def __init__(self, corpus_name="personachat", build=False):
 
         corpus = os.path.join("../data", corpus_name)
         datafile = os.path.join(corpus, "formatted_movie_lines.txt")
