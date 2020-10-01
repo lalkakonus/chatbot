@@ -42,8 +42,10 @@ class AttentionModule(nn.Module):
         self.hidden_size = hidden_size
         if self.method == 'general':
             self.attn = nn.Linear(self.hidden_size, hidden_size)
+            nn.init.xavier_uniform_(self.attn.weight.data)
         elif self.method == 'concat':
             self.attn = nn.Linear(self.hidden_size * 2, hidden_size)
+            nn.init.xavier_uniform_(self.attn.weight.data)
             self.v = nn.Parameter(torch.FloatTensor(hidden_size))
 
     @staticmethod
@@ -94,6 +96,9 @@ class DecoderRNN(nn.Module):
         self.gru = nn.GRU(hidden_size, hidden_size, n_layers, dropout=(0 if n_layers == 1 else dropout))
         self.concat = nn.Linear(hidden_size * 2, hidden_size)
         self.out = nn.Linear(hidden_size, output_size)
+
+        nn.init.xavier_uniform_(self.out.weight.data)
+        nn.init.xavier_uniform_(self.concat.weight.data, nn.init.calculate_gain('tanh'))
 
         self.attn = AttentionModule(attn_model, hidden_size)
 
