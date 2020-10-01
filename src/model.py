@@ -10,7 +10,7 @@ import random
 import torch
 import torch.nn as nn
 from torch import optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 
 from dataset import ConversationsDataset
 from nn_modules import EncoderRNN, DecoderRNN, GreedySearch
@@ -77,6 +77,9 @@ class ChatModel:
                     state[k] = v.cuda()
 
     def __train_iteration__(self, input_variable, lengths, target_variable, mask, max_target_len, batch_size):
+        # Ensure dropout layers are in train mode
+        self.encoder.train()
+        self.decoder.train()
 
         # Zero gradients
         self.encoder_optimizer.zero_grad()
@@ -147,31 +150,75 @@ class ChatModel:
 
         return sum(print_losses) / n_totals
 
-    def train(self, dataloader):
-        # Ensure dropout layers are in train mode
-        self.encoder.train()
-        self.decoder.train()
+    def __test_iteration__(self, input_variable, lengths, target_variable, mask, max_target_len, batch_size):
+        # Ensure dropout layers are in eval mode
+        self.encoder.eval()
+        self.decoder.eval()
 
+        # Set device options
+        input_variable = input_variable.to(device)
+        lengths = lengths.to(device)
+        target_variable = target_variable.to(device)
+        mask = mask.to(device)
+
+        # Initialize variables
+        loss = 0
+        n_totals = 0
+
+        # Forward pass through encoder
+        encoder_outputs, encoder_hidden = self.encoder(input_variable, lengths)
+
+        # Create initial decoder input (start with SOS tokens for each sentence)
+        decoder_input = torch.LongTensor([[SOS_token for _ in range(batch_size)]])
+        decoder_input = decoder_input.to(device)
+
+        # Set initial decoder hidden state to the encoder's final hidden state
+        decoder_hidden = encoder_hidden[:self.decoder.n_layers]
+
+        for t in range(max_target_len):
+            decoder_output, decoder_hidden = self.decoder(decoder_input, decoder_hidden, encoder_outputs)
+
+            # No teacher forcing: next input is decoder's own current output
+            _, topi = decoder_output.topk(1)
+            decoder_input = torch.LongTensor([[topi[i][0] for i in range(batch_size)]])
+            decoder_input = decoder_input.to(device)
+            # Calculate and accumulate loss
+            mask_loss, n_total = maskNLLLoss(decoder_output, target_variable[t], mask[t])
+            loss += mask_loss.item() * n_total
+            n_totals += n_total
+
+        return loss / n_totals
+
+
+    def train(self, train_dataloader, test_dataloader):
         # Training loop
         print("Training...")
         for self.epoch in range(self.epoch, self.n_epoch + 1):
-            loss = 0
-            for train_batch in dataloader:
+            train_loss = 0
+            test_loss = 0
+            for train_batch in train_dataloader:
                 # Extract fields from batch
                 input_variable, lengths, target_variable, mask, max_target_len = train_batch
 
                 # Run a training iteration with batch
-                loss += self.__train_iteration__(input_variable, lengths, target_variable, mask, max_target_len,
-                                                dataloader.batch_size)
+                train_loss += self.__train_iteration__(input_variable, lengths, target_variable, mask, max_target_len,
+                                                       train_dataloader.batch_size)
+            for test_batch in test_dataloader:
+                input_variable, lengths, target_variable, mask, max_target_len = test_batch
+                # Run a training iteration with batch
+                test_loss += self.__test_iteration__(input_variable, lengths, target_variable, mask, max_target_len,
+                                                     train_dataloader.batch_size)
 
             # Print progress
-            self.train_loss.append(loss / len(dataloader))
-            print("Iteration: {}; Percent complete: {:.1f}%; Average loss: {:.4f}".format(self.epoch,
-                                                                                          self.epoch / self.n_epoch * 100,
-                                                                                          self.train_loss[-1]))
+            self.train_loss.append(train_loss / len(train_dataloader))
+            print("Iteration: {}; Percent complete: {:.1f}%; "
+                  "Average train loss: {:.4f}; test loss: {:.4f}".format(self.epoch, self.epoch / self.n_epoch * 100,
+                                                                         train_loss, test_loss))
             # Save checkpoint
             if self.epoch % self.save_every == 0:
                 self.save()
+
+
 
     def evaluate(self, sentence):
         self.encoder.eval()
@@ -232,11 +279,19 @@ if __name__ == "__main__":
         config = json.load(f)
     config["VOCABULARY"] = dataset.vocabulary
 
-    dataloader = DataLoader(dataset, batch_size=config["BATCH_SIZE"], collate_fn=dataset.batch_to_train_data,
-                            drop_last=True, shuffle=True)
+    train_ration = 0.8
+    size_list = [round(len(dataset) * train_ration), round(len(dataset) * (1 - train_ration))]
+    train_dataset, test_dataset = random_split(dataset, size_list, generator=torch.Generator().manual_seed(42))
 
-    # model = ChatModel(config)
-    # model.train(dataloader)
+    train_dataloader = DataLoader(train_dataset, batch_size=config["BATCH_SIZE"],
+                                  collate_fn=dataset.batch_to_train_data,
+                                  drop_last=True, shuffle=True)
+    test_dataloader = DataLoader(test_dataset, batch_size=config["BATCH_SIZE"],
+                                 collate_fn=dataset.batch_to_train_data,
+                                 drop_last=True, shuffle=True)
+
+    model = ChatModel(config)
+    model.train(train_dataloader, test_dataloader)
     # model.save()
-    model = ChatModel.load("../data/checkpoints/", 2, 2, 500, 10)
+    # model = ChatModel.load("../data/checkpoints/", 2, 2, 500, 10)
     # print(model.evaluate("hello dear !"))
